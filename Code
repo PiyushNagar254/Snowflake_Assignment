@@ -1,0 +1,122 @@
+-- Step 1: Creating Admin, Developer, and PII roles
+CREATE ROLE admin;
+CREATE ROLE developer;
+CREATE ROLE pii;
+
+-- Granting the roles the necessary privileges
+GRANT ROLE ACCOUNTADMIN TO ROLE admin;
+
+-- Step 2: Creating a new Medium-sized warehouse for new schema
+CREATE WAREHOUSE my_new_assignment_wh
+    WITH
+        WAREHOUSE_SIZE = 'Medium'
+        AUTO_SUSPEND = 5
+        AUTO_RESUME = TRUE;
+
+-- Step 3: Granting admin role to the user and switching to admin role
+GRANT ROLE admin TO USER PIYUSH2002;
+SHOW GRANTS TO USER PIYUSH2002;
+USE ROLE admin;
+
+-- Step 4: Creating new database
+CREATE DATABASE my_new_assignment_db;
+
+-- Step 5: Creating a new schema in the new database
+CREATE SCHEMA my_new_assignment_db.my_new_schema;
+
+-- Step 6: Creating new tables
+CREATE TABLE my_new_assignment_db.my_new_schema.employee (
+  id INT,
+  first_name STRING,
+  last_name STRING,
+  email STRING,
+  phone_number STRING
+);
+
+CREATE TABLE my_new_assignment_db.my_new_schema.employee_ext (
+  id INT,
+  first_name STRING,
+  last_name STRING,
+  email STRING,
+  phone_number STRING
+);
+
+-- Step 7: Creating variant table
+CREATE TABLE my_new_assignment_db.my_new_schema.employee_variant (
+  data VARIANT
+);
+
+-- Step 8: Creating internal and external stages
+
+-- Internal storage stage
+CREATE STAGE my_new_assignment_stage;
+
+-- External storage integration
+CREATE OR REPLACE STORAGE INTEGRATION my_new_assignment_ext_stage
+    TYPE = EXTERNAL_STAGE
+    STORAGE_PROVIDER = AZURE
+    ENABLED = TRUE
+    AZURE_TENANT_ID = 'd620e678-09d6-45c0-8b73-108de10a5067'  
+    STORAGE_ALLOWED_LOCATIONS = ('azure://newstorage.blob.core.windows.net/snowflakecontainer/data.csv');
+
+-- Describe the storage integration to verify it
+DESC STORAGE INTEGRATION my_new_assignment_ext_stage;
+
+-- File format for CSV
+CREATE OR REPLACE FILE FORMAT my_new_assignment_db.my_new_schema.fileForm
+    TYPE = CSV
+    FIELD_DELIMITER = ','
+    SKIP_HEADER = 1;
+
+-- External stage using storage integration
+CREATE OR REPLACE STAGE my_new_assignment_ext_stage2
+    STORAGE_INTEGRATION = my_new_assignment_ext_stage
+    URL = 'azure://newstorage.blob.core.windows.net/newcontainer/data.csv'  
+    FILE_FORMAT = my_new_assignment_db.my_new_schema.fileForm;
+
+-- List files in the external stage
+LIST @my_new_assignment_ext_stage2;
+
+-- Step 9: Loading data into tables
+
+-- From internal stage
+COPY INTO my_new_assignment_db.my_new_schema.employee
+FROM @my_new_assignment_stage/data.csv.gz
+FILE_FORMAT = (TYPE = 'CSV')
+ON_ERROR = 'CONTINUE';
+
+-- From external stage
+COPY INTO my_new_assignment_db.my_new_schema.employee_ext 
+FROM @my_new_assignment_ext_stage2 
+FILE_FORMAT = (TYPE = 'CSV')
+ON_ERROR = 'CONTINUE';
+
+-- Step 10: Uploading Parquet file to stage
+CREATE OR REPLACE STAGE my_new_assignment_parquet_stage;
+
+-- Step 11: Loading Parquet file
+CREATE OR REPLACE FILE FORMAT my_parquet_format
+  TYPE = 'PARQUET';
+
+SELECT *
+FROM @my_new_assignment_parquet_stage/DATA.parquet
+  (FILE_FORMAT => 'my_parquet_format');
+
+-- Step 12: Adding masking policy for developer and PII roles
+-- For PII roles
+CREATE OR REPLACE MASKING POLICY mask_pii
+  AS (val STRING) 
+  RETURNS STRING ->
+    CASE
+      WHEN CURRENT_ROLE() IN ('pii') THEN val
+      ELSE '****'
+    END;
+
+-- Applying masking policy to email and phone_number columns
+ALTER TABLE my_new_assignment_db.my_new_schema.employee 
+  MODIFY COLUMN email SET MASKING POLICY mask_pii;
+ALTER TABLE my_new_assignment_db.my_new_schema.employee 
+  MODIFY COLUMN phone_number SET MASKING POLICY mask_pii;
+
+
+  
